@@ -102,7 +102,7 @@ class TokenBucket(object):
             return self._set_unlocked(tokens, last=last)
 
 
-class ScheduledRefillTokenBucket(TokenBucket):
+class ScheduledTokenBucket(TokenBucket):
 
     def __init__(self, path, key, rate, period):
         super(ScheduledTokenBucket, self).__init__(
