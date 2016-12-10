@@ -58,7 +58,7 @@ class TokenBucket(object):
             (self.key,)).fetchone()
         now = time.time()
         if not row:
-            tokens, last = 0.0, now
+            tokens, last = self.rate, now
         else:
             tokens, last = row
         tokens, last = self.update(tokens, last, now)
