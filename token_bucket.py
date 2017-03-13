@@ -1,8 +1,10 @@
+import contextlib
 import logging
 import os
-import sqlite3
 import threading
 import time
+
+import apsw
 
 
 def log():
@@ -24,10 +26,10 @@ class TokenBucket(object):
         db = getattr(self._local, "db", None)
         if db is not None:
             return db
-        db = sqlite3.connect(self.path)
-        db.isolation_level = "IMMEDIATE"
+        db = apsw.Connection(self.path)
+        db.setbusytimeout(5000)
         with db:
-            db.execute(
+            db.cursor().execute(
                 "create table if not exists tbf ("
                 "  key text primary key,"
                 "  tokens float not null,"
@@ -35,42 +37,55 @@ class TokenBucket(object):
         self._local.db = db
         return db
 
-    def _set_unlocked(self, tokens, last=None):
-        if last is None:
-            last = time.time()
-        if tokens < 0:
-            tokens = 0.0
-        if tokens > self.rate:
-            tokens = self.rate
-        self.db.execute(
-            "insert or replace into tbf (key, tokens, last) values (?, ?, ?)",
-            (self.key, tokens, last))
-        return (tokens, last)
+    @contextlib.contextmanager
+    def _begin(self):
+        self.db.cursor().execute("begin immediate")
+        try:
+            yield
+        except:
+            self.db.cursor().execute("rollback")
+            raise
+        else:
+            self.db.cursor().execute("commit")
+
+    def _set(self, tokens, last=None):
+        with self.db:
+            if last is None:
+                last = time.time()
+            if tokens < 0:
+                tokens = 0.0
+            if tokens > self.rate:
+                tokens = self.rate
+            self.db.cursor().execute(
+                "insert or replace into tbf (key, tokens, last) "
+                "values (?, ?, ?)",
+                (self.key, tokens, last))
+            return (tokens, last)
 
     def update(self, tokens, last, as_of):
         tdelta = as_of - last
         tokens += tdelta * self.rate / self.period
         return tokens, last
 
-    def _peek_unlocked(self):
-        row = self.db.execute(
-            "select tokens, last from tbf where key = ?",
-            (self.key,)).fetchone()
-        now = time.time()
-        if not row:
-            tokens, last = self.rate, now
-        else:
-            tokens, last = row
-        tokens, last = self.update(tokens, last, now)
-        tokens, last = self._set_unlocked(tokens, now)
-        return (tokens, last)
+    def _peek(self):
+        with self.db:
+            row = self.db.cursor().execute(
+                "select tokens, last from tbf where key = ?",
+                (self.key,)).fetchone()
+            now = time.time()
+            if not row:
+                tokens, last = self.rate, now
+            else:
+                tokens, last = row
+            tokens, last = self.update(tokens, last, now)
+            tokens, last = self._set(tokens, now)
+            return (tokens, last)
 
     def try_consume(self, n):
-        with self.db:
-            tokens, last = self._peek_unlocked()
+        with self._begin():
+            tokens, last = self._peek()
             if tokens >= n:
-                tokens, last = self._set_unlocked(
-                    tokens - n, last=last)
+                tokens, last = self._set(tokens - n, last=last)
                 log().debug(
                     "%s: Gave %s token(s). %s remaining.",
                     self.key, n, tokens)
@@ -94,12 +109,12 @@ class TokenBucket(object):
                 time.sleep(wait)
 
     def peek(self):
-        with self.db:
-            return self._peek_unlocked()
+        with self._begin():
+            return self._peek()
 
     def set(self, tokens, last=None):
-        with self.db:
-            return self._set_unlocked(tokens, last=last)
+        with self._begin():
+            return self._set(tokens, last=last)
 
 
 class ScheduledTokenBucket(TokenBucket):

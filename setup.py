@@ -9,7 +9,7 @@ with open("README") as readme:
 
 setup(
     name="token_bucket",
-    version="0.1.0",
+    version="0.99.0",
     description="A sqlite-backed token bucket rate limiter implementation.",
     long_description=documentation,
     author="AllSeeingEyeTolledEweSew",
@@ -17,4 +17,7 @@ setup(
     url="http://github.com/AllSeeingEyeTolledEweSew/token_bucket",
     license="Unlicense",
     py_modules=["token_bucket"],
+    install_requires=[
+        "apsw>=3.9.2",
+    ],
 )
