@@ -17,7 +17,4 @@ setup(
     url="http://github.com/AllSeeingEyeTolledEweSew/token_bucket",
     license="Unlicense",
     py_modules=["token_bucket"],
-    install_requires=[
-        "apsw>=3.9.2",
-    ],
 )
