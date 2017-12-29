@@ -81,10 +81,12 @@ class TokenBucket(object):
             tokens, last = self._set(tokens, now)
             return (tokens, last)
 
-    def try_consume(self, n):
+    def try_consume(self, n, leave=None):
+        if leave is None:
+            leave = 0
         with self._begin():
             tokens, last = self._peek()
-            if tokens >= n:
+            if tokens >= n and tokens > leave:
                 tokens, last = self._set(tokens - n, last=last)
                 log().debug(
                     "%s: Gave %s token(s). %s remaining.",
@@ -95,10 +97,10 @@ class TokenBucket(object):
     def estimate(self, tokens, last, n, as_of):
         return last + (n - tokens) * self.period / self.rate
 
-    def consume(self, n):
+    def consume(self, n, leave=None):
         assert n > 0
         while True:
-            success, tokens, last = self.try_consume(n)
+            success, tokens, last = self.try_consume(n, leave=leave)
             if success:
                 return (tokens, last)
             now = time.time()
