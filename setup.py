@@ -8,13 +8,13 @@ with open("README") as readme:
     documentation = readme.read()
 
 setup(
-    name="token_bucket",
+    name="tbucket",
     version="0.99.0",
     description="A sqlite-backed token bucket rate limiter implementation.",
     long_description=documentation,
     author="AllSeeingEyeTolledEweSew",
     author_email="allseeingeyetolledewesew@protonmail.com",
-    url="http://github.com/AllSeeingEyeTolledEweSew/token_bucket",
+    url="http://github.com/AllSeeingEyeTolledEweSew/tbucket",
     license="Unlicense",
-    py_modules=["token_bucket"],
+    py_modules=["tbucket"],
 )
