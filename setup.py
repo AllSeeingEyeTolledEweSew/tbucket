@@ -9,7 +9,7 @@ with open("README") as readme:
 
 setup(
     name="tbucket",
-    version="0.99.0",
+    version="0.1.1",
     description="A sqlite-backed token bucket rate limiter implementation.",
     long_description=documentation,
     author="AllSeeingEyeTolledEweSew",
