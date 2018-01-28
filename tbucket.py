@@ -147,9 +147,12 @@ class ScheduledTokenBucket(TokenBucket):
 
 class TimeSeriesTokenBucket(TokenBucket):
 
-    def __init__(self, path, key, rate, period):
+    def __init__(self, path, key, rate, period, trim_func=None):
         super(TimeSeriesTokenBucket, self).__init__(path, key, rate, period)
         self.rate = int(self.rate)
+        if trim_func is None:
+            trim_func = self._trim_default
+        self.trim = trim_func
 
     @property
     def db(self):
@@ -169,6 +172,17 @@ class TimeSeriesTokenBucket(TokenBucket):
         self._local.db = db
         return db
 
+    def _trim_default(self):
+        r = self.db.cursor().execute(
+            "select max(time) from ts_token_bucket where key = ?",
+            (self.key,)).fetchone()
+        if r is None or r[0] is None:
+            return
+        latest = r[0]
+        self.db.cursor().execute(
+            "delete from ts_token_bucket where key = ? and time < ?",
+            (self.key, latest - self.period))
+
     def _record(self, *times):
         if not times:
             return
@@ -176,6 +190,7 @@ class TimeSeriesTokenBucket(TokenBucket):
             self.db.cursor().executemany(
                 "insert into ts_token_bucket (key, time) values (?, ?)",
                 [(self.key, t) for t in times])
+            self.trim()
 
     def record(self, *times):
         with self._begin():
