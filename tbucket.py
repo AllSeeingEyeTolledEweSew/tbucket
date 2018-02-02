@@ -1,3 +1,6 @@
+# The author disclaims copyright to this source code. Please see the
+# accompanying UNLICENSE file.
+
 """
 tbucket: some stateful classes for "token bucket" style rate limiting.
 
