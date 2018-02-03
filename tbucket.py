@@ -141,7 +141,7 @@ class TokenBucket(object):
                 (self.key, tokens, last))
             return (tokens, last)
 
-    def update(self, tokens, last, as_of):
+    def _update(self, tokens, last, as_of):
         """Update the bucket state for a new time, given a last known state.
 
         This function doesn't touch the database, and has no side effects.
@@ -175,7 +175,7 @@ class TokenBucket(object):
                 tokens, last = self.rate, now
             else:
                 tokens, last = row
-            tokens, last = self.update(tokens, last, now)
+            tokens, last = self._update(tokens, last, now)
             tokens, last = self._set(tokens, now)
             return (tokens, last)
 
@@ -330,7 +330,7 @@ class ScheduledTokenBucket(TokenBucket):
         """
         return self.get_last_refill(when) + self.period
 
-    def update(self, tokens, last, as_of):
+    def _update(self, tokens, last, as_of):
         last_refill = self.get_last_refill(as_of)
         if last_refill > last:
             return (self.rate, last_refill)
