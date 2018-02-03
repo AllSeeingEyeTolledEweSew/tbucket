@@ -208,7 +208,7 @@ class TokenBucket(object):
                 return (True, tokens, last)
             return (False, tokens, last)
 
-    def estimate(self, tokens, last, n, as_of):
+    def _estimate(self, tokens, last, n, as_of):
         """Estimate the timestamp at which we would have a number of tokens.
 
         This function doesn't touch the database, and has no side effects.
@@ -245,7 +245,7 @@ class TokenBucket(object):
             if success:
                 return (tokens, last)
             now = time.time()
-            target = self.estimate(tokens, last, n, now)
+            target = self._estimate(tokens, last, n, now)
             if target > now:
                 wait = target - now
                 log().debug("%s: Waiting %ss for tokens", self.key, wait)
@@ -336,7 +336,7 @@ class ScheduledTokenBucket(TokenBucket):
             return (self.rate, last_refill)
         return (tokens, as_of)
 
-    def estimate(self, tokens, last, n, as_of):
+    def _estimate(self, tokens, last, n, as_of):
         if tokens >= n:
             return as_of
         return self.get_next_refill(as_of)
