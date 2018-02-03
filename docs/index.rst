@@ -1,4 +1,5 @@
-.. The author disclaims copyright to this source code.
+.. The author disclaims copyright to this source code. Please see the
+   accompanying UNLICENSE file.
 
 tbucket documentation
 =====================
