@@ -308,7 +308,7 @@ class ScheduledTokenBucket(TokenBucket):
         super(ScheduledTokenBucket, self).__init__(
             path, key, rate, period)
 
-    def get_last_refill(self, when):
+    def _get_last_refill(self, when):
         """Get the last time the bucket refilled, as of a query time.
 
         Args:
@@ -319,7 +319,7 @@ class ScheduledTokenBucket(TokenBucket):
         """
         return when - (when % self.period)
 
-    def get_next_refill(self, when):
+    def _get_next_refill(self, when):
         """Get the next time the bucket will refill, as of a query time.
 
         Args:
@@ -328,10 +328,10 @@ class ScheduledTokenBucket(TokenBucket):
         Returns:
             A timestamp representing the next time the bucket will refill.
         """
-        return self.get_last_refill(when) + self.period
+        return self._get_last_refill(when) + self.period
 
     def _update(self, tokens, timestamp, query_time):
-        last_refill = self.get_last_refill(query_time)
+        last_refill = self._get_last_refill(query_time)
         if last_refill > timestamp:
             return (self.rate, last_refill)
         return (tokens, query_time)
@@ -339,7 +339,7 @@ class ScheduledTokenBucket(TokenBucket):
     def _estimate(self, tokens, timestamp, n, query_time):
         if tokens >= n:
             return query_time
-        return self.get_next_refill(query_time)
+        return self._get_next_refill(query_time)
 
 
 class TimeSeriesTokenBucket(TokenBucket):
