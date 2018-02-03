@@ -141,7 +141,7 @@ class TokenBucket(object):
                 (self.key, tokens, timestamp))
             return (tokens, timestamp)
 
-    def _update(self, tokens, timestamp, as_of):
+    def _update(self, tokens, timestamp, query_time):
         """Update the bucket state for a new time, given a last known state.
 
         This function doesn't touch the database, and has no side effects.
@@ -149,12 +149,12 @@ class TokenBucket(object):
         Args:
             tokens: The last known number of tokens.
             timestamp: The timestamp of the last known number of tokens.
-            as_of: The query time.
+            query_time: The query time.
 
         Returns:
             A (tokens, timestamp) state tuple.
         """
-        tdelta = as_of - timestamp
+        tdelta = query_time - timestamp
         tokens += tdelta * self.rate / self.period
         return tokens, timestamp
 
@@ -208,7 +208,7 @@ class TokenBucket(object):
                 return (True, tokens, timestamp)
             return (False, tokens, timestamp)
 
-    def _estimate(self, tokens, timestamp, n, as_of):
+    def _estimate(self, tokens, timestamp, n, query_time):
         """Estimate the timestamp at which we would have a number of tokens.
 
         This function doesn't touch the database, and has no side effects.
@@ -217,7 +217,7 @@ class TokenBucket(object):
             tokens: The last known number of tokens.
             timestamp: The timestamp of the last known number of tokens.
             n: The number of tokens we need.
-            as_of: The time as of which the query is made.
+            query_time: The time as of which the query is made.
 
         Returns:
             The timestamp at which we would have n tokens available.
@@ -330,16 +330,16 @@ class ScheduledTokenBucket(TokenBucket):
         """
         return self.get_last_refill(when) + self.period
 
-    def _update(self, tokens, timestamp, as_of):
-        last_refill = self.get_last_refill(as_of)
+    def _update(self, tokens, timestamp, query_time):
+        last_refill = self.get_last_refill(query_time)
         if last_refill > timestamp:
             return (self.rate, last_refill)
-        return (tokens, as_of)
+        return (tokens, query_time)
 
-    def _estimate(self, tokens, timestamp, n, as_of):
+    def _estimate(self, tokens, timestamp, n, query_time):
         if tokens >= n:
-            return as_of
-        return self.get_next_refill(as_of)
+            return query_time
+        return self.get_next_refill(query_time)
 
 
 class TimeSeriesTokenBucket(TokenBucket):
@@ -432,32 +432,32 @@ class TimeSeriesTokenBucket(TokenBucket):
         with self._begin():
             return self._record(*times)
 
-    def _mutate(self, mutator, as_of=None):
+    def _mutate(self, mutator, query_time=None):
         """Mutate the set of token timestamps within the most recent period.
 
-        This will get the list of token timestamps that occurred from `as_of -
-        period` and `as_of`, pass them to a `mutator` function. The `mutator`
-        should return a new set of timestamps, which must all be within the
-        same window. This function will then update the database so that the
-        returned timestamps will be the only timestamps that exist within the
-        window.
+        This will get the list of token timestamps that occurred from
+        `query_time - period` and `query_time`, pass them to a `mutator`
+        function. The `mutator` should return a new set of timestamps, which
+        must all be within the same window. This function will then update the
+        database so that the returned timestamps will be the only timestamps
+        that exist within the window.
 
         Will perform a SAVEPOINT/RELEASE on the database.
 
         Args:
-            mutator: A function which takes (list_of_timestamps, as_of) and
-                returns a new list of timestamps.
-            as_of: A target query time. The target window will be from `as_of -
-                period` to `as_of`. If None, defaults to now. This value will
-                be passed to the mutator function.
+            mutator: A function which takes (list_of_timestamps, query_time)
+                and returns a new list of timestamps.
+            query_time: A target query time. The target window will be from
+                `query_time - period` to `query_time`. If None, defaults to
+                now. This value will be passed to the mutator function.
         """
-        if as_of is None:
-            as_of = time.time()
+        if query_time is None:
+            query_time = time.time()
         with self.db:
-            _, old_times, as_of = self.peek(as_of=as_of)
-            new_times = mutator(old_times, as_of)
+            _, old_times, query_time = self.peek(query_time=query_time)
+            new_times = mutator(old_times, query_time)
             assert all(
-                t <= as_of and t >= as_of - self.period
+                t <= query_time and t >= query_time - self.period
                 for t in new_times), new_times
             old_counter = collections.Counter(old_times)
             new_counter = collections.Counter(new_times)
@@ -471,32 +471,32 @@ class TimeSeriesTokenBucket(TokenBucket):
                     "(select rowid from ts_token_bucket "
                     "where key = ? and time = ? limit 1)",
                     [(self.key, t) for t in times_to_delete])
-            return (self.rate - len(new_times), new_times, as_of)
+            return (self.rate - len(new_times), new_times, query_time)
 
-    def mutate(self, mutator, as_of=None):
+    def mutate(self, mutator, query_time=None):
         """Mutate the set of token timestamps recorded in a recent period.
 
-        This will get the list of token timestamps that occurred from `as_of -
-        period` and `as_of`, and pass them to a `mutator` function. `mutator`
-        should return a new set of timestamps, which must all be within the
-        same window. This function will then update the database so that the
-        returned timestamps will be the only timestamps that exist within the
-        window.
+        This will get the list of token timestamps that occurred from
+        `query_time - period` and `query_time`, pass them to a `mutator`
+        function. The `mutator` should return a new set of timestamps, which
+        must all be within the same window. This function will then update the
+        database so that the returned timestamps will be the only timestamps
+        that exist within the window.
 
         Will perform a BEGIN IMMEDIATE transaction on the database. The
         transaction will be held while `mutator` is called.
 
         Args:
-            mutator: A function which takes (list_of_timestamps, as_of), and
-                returns a new list of timestamps.
-            as_of: A target query time. The target window will be from `as_of -
-                period` to `as_of`. If None, defaults to now. This value will
-                be passed to the mutator function.
+            mutator: A function which takes (list_of_timestamps, query_time),
+                and returns a new list of timestamps.
+            query_time: A target query time. The target window will be from
+                `query_time - period` to `query_time`. If None, defaults to
+                now. This value will be passed to the mutator function.
         """
         with self._begin():
-            return self._mutate(mutator, as_of=as_of)
+            return self._mutate(mutator, query_time=query_time)
 
-    def set(self, n, as_of=None, fill=None, prune=None):
+    def set(self, n, query_time=None, fill=None, prune=None):
         """Updates the set of token timestamps recorded in a recent window such
         that there are exactly n.
 
@@ -510,10 +510,10 @@ class TimeSeriesTokenBucket(TokenBucket):
         case.
 
         If it needs to record new token timestamps, by default, it will record
-        them all at `as_of`. In other words, the default is to guess that some
-        tokens were consumed just now. This is the most conservative guess, as
-        it means the consumer will need to wait the longest possible time
-        before consuming more.
+        them all at `query_time`. In other words, the default is to guess that
+        some tokens were consumed just now. This is the most conservative
+        guess, as it means the consumer will need to wait the longest possible
+        time before consuming more.
 
         If it needs to remove some token timestamps, by default it will remove
         them at random.
@@ -523,19 +523,19 @@ class TimeSeriesTokenBucket(TokenBucket):
 
         Args:
             n: The number of tokens that should exist in the recent window of
-                `as_of - period` to `as_of`.
-            as_of: The end of the window. If None, defaults to now.
+                `query_time - period` to `query_time`.
+            query_time: The end of the window. If None, defaults to now.
             fill: A function to guess when some token timestamps might have
                 occurred, if new ones must be recorded. Takes
-                (list_of_timestamps, as_of, n) as arguments, and must return a
-                new list of timestamps of length n. The new timestamps should
-                all be within `as_of - preiod` and `as_of`. The default returns
-                `[as_of] * n`.
+                (list_of_timestamps, query_time, n) as arguments, and must
+                return a new list of timestamps of length n. The new timestamps
+                should all be within `query_time - preiod` and `query_time`.
+                The default returns `[query_time] * n`.
             prune: A function to guess which timestamps should be deleted, if
-                some must be removed. Takes (list_of_timestamps, as_of, n) as
-                arguments, and must return a new list of timestamps of length
-                n, where each timestamp occurs in the old list at least as many
-                times as in the new one. The default returns
+                some must be removed. Takes (list_of_timestamps, query_time, n)
+                as arguments, and must return a new list of timestamps of
+                length n, where each timestamp occurs in the old list at least
+                as many times as in the new one. The default returns
                 `random.sample(list_of_timestamps, n)`.
 
         Returns:
@@ -545,25 +545,26 @@ class TimeSeriesTokenBucket(TokenBucket):
         assert n <= self.rate, n
 
         if fill is None:
-            def fill(times, as_of, n):
-                return [as_of] * n
+            def fill(times, query_time, n):
+                return [query_time] * n
 
         if prune is None:
-            def prune(times, as_of, n):
+            def prune(times, query_time, n):
                 return random.sample(times, n)
 
-        def mutator(times, as_of):
+        def mutator(times, query_time):
             tokens = self.rate - len(times)
             if tokens > n:
                 num_to_add = tokens - n
-                new = list(fill(times, as_of, num_to_add))
+                new = list(fill(times, query_time, num_to_add))
                 assert len(new) == num_to_add, new
                 assert all(
-                    t >= as_of - self.period and t <= as_of for t in new), new
+                    t >= query_time - self.period and t <= query_time
+                    for t in new), new
                 return list(times) + new
             elif tokens < n:
                 num_to_prune = n - tokens
-                to_prune = list(prune(times, as_of, num_to_prune))
+                to_prune = list(prune(times, query_time, num_to_prune))
                 assert len(to_prune) == num_to_prune, to_prune
                 times_counter = collections.Counter(times)
                 times_counter.subtract(collections.Counter(to_prune))
@@ -572,30 +573,30 @@ class TimeSeriesTokenBucket(TokenBucket):
                 return list(times_counter.elements())
             return times
 
-        return self.mutate(mutator, as_of=as_of)
+        return self.mutate(mutator, query_time=query_time)
 
-    def peek(self, as_of=None):
+    def peek(self, query_time=None):
         """Peek at the recorded token timestamps in a recent window.
 
         This will perform a SAVEPOINT/RELEASE on the database.
 
         Args:
-            as_of: The target query time. If None, defaults to now.
+            query_time: The target query time. If None, defaults to now.
 
         Returns:
-            A tuple of (tokens, list_of_timestamps, as_of). The number of
+            A tuple of (tokens, list_of_timestamps, query_time). The number of
                 tokens will always be `rate - len(list_of_timestamps`).
         """
-        if as_of is None:
-            as_of = time.time()
+        if query_time is None:
+            query_time = time.time()
         with self.db:
             c = self.db.cursor()
             c.execute(
                 "select time from ts_token_bucket "
                 "where key = ? and time >= ? and time <= ?",
-                (self.key, as_of - self.period, as_of))
+                (self.key, query_time - self.period, query_time))
             times = [r[0] for r in c.fetchall()]
-            return (self.rate - len(times), times, as_of)
+            return (self.rate - len(times), times, query_time)
 
     def try_consume(self, n, leave=None):
         """Try to consume some tokens.
@@ -612,7 +613,7 @@ class TimeSeriesTokenBucket(TokenBucket):
                 tokens left over, after n are consumed.
 
         Returns:
-            A (success, tokens, list_of_timestamps, as_of) tuple.
+            A (success, tokens, list_of_timestamps, query_time) tuple.
         """
         assert n > 0, n
         assert n <= self.rate, n
@@ -620,27 +621,27 @@ class TimeSeriesTokenBucket(TokenBucket):
             leave = 0
         success = False
         with self._begin():
-            _, times, as_of = self.peek()
+            _, times, query_time = self.peek()
             tokens = self.rate - len(times)
             if tokens >= n and tokens > leave:
-                new_times = [as_of] * n
+                new_times = [query_time] * n
                 self._record(*new_times)
                 times += new_times
                 tokens -= n
                 log().debug(
                     "%s: Gave %s token(s). %s remaining.", self.key, n, tokens)
                 success = True
-            return (success, self.rate - len(times), times, as_of)
+            return (success, self.rate - len(times), times, query_time)
 
-    def _estimate(self, times, as_of, n):
+    def _estimate(self, times, query_time, n):
         """Estimate the timestamp at which we would have a number of tokens.
 
         This function doesn't touch the database, and has no side effects.
 
         Args:
-            times: A list of token timestamps, between `as_of - period` and
-                `as_of`.
-            as_of: The time as of which the query is made.
+            times: A list of token timestamps, between `query_time - period`
+                and `query_time`.
+            query_time: The time as of which the query is made.
             n: The number of tokens we need.
 
         Returns:
@@ -650,25 +651,25 @@ class TimeSeriesTokenBucket(TokenBucket):
         assert n <= self.rate, n
         offset = self.rate - n
         if offset >= len(times):
-            return as_of
+            return query_time
         times = sorted(times, key=lambda t: -t)
         return times[offset] + self.period
 
-    def estimate(self, n, as_of=None):
+    def estimate(self, n, query_time=None):
         """Estimate the timestamp at which we would have a number of tokens.
 
         This will perform a SAVEPOINT/RELEASE on the database.
 
         Args:
             n: The number of tokens we need.
-            as_of: The time as of which the query is made. If None, defaults to
-                now.
+            query_time: The time as of which the query is made. If None,
+                defaults to now.
 
         Returns:
             The timestamp at which we would have n tokens available.
         """
-        _, times, as_of = self.peek(as_of=as_of)
-        return self._estimate(times, as_of, n)
+        _, times, query_time = self.peek(query_time=query_time)
+        return self._estimate(times, query_time, n)
 
     def consume(self, n, leave=None):
         """Consume tokens, waiting for them if necessary.
@@ -683,14 +684,14 @@ class TimeSeriesTokenBucket(TokenBucket):
                 would be able to leave this many behind.
 
         Returns:
-            A tuple of (tokens, list_of_timestamps, as_of). The number of
+            A tuple of (tokens, list_of_timestamps, query_Time). The number of
                 tokens will always be `rate - len(list_of_timestamps`).
         """
         while True:
-            success, _, times, as_of = self.try_consume(n, leave=leave)
+            success, _, times, query_time = self.try_consume(n, leave=leave)
             if success:
-                return (self.rate - len(times), times, as_of)
-            target = self._estimate(times, as_of, n)
+                return (self.rate - len(times), times, query_time)
+            target = self._estimate(times, query_time, n)
             now = time.time()
             if target > now:
                 wait = target - now
