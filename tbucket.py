@@ -113,7 +113,7 @@ class TokenBucket(object):
         else:
             self.db.cursor().execute("commit")
 
-    def _set(self, tokens, last=None):
+    def _set(self, tokens, timestamp=None):
         """Sets the state of the bucket.
 
         The state will be clamped to valid values before being set.
@@ -122,15 +122,15 @@ class TokenBucket(object):
 
         Args:
             tokens: The number of tokens we have/had at the given time.
-            last: The time at which we had this number of tokens. If None,
+            timestamp: The time at which we had this number of tokens. If None,
                 the current time will be used.
 
         Returns:
-            A (tokens, last) tuple, clamped to valid values.
+            A (tokens, timestamp) tuple, clamped to valid values.
         """
         with self.db:
-            if last is None:
-                last = time.time()
+            if timestamp is None:
+                timestamp = time.time()
             if tokens < 0:
                 tokens = 0.0
             if tokens > self.rate:
@@ -138,25 +138,25 @@ class TokenBucket(object):
             self.db.cursor().execute(
                 "insert or replace into tbf (key, tokens, last) "
                 "values (?, ?, ?)",
-                (self.key, tokens, last))
-            return (tokens, last)
+                (self.key, tokens, timestamp))
+            return (tokens, timestamp)
 
-    def _update(self, tokens, last, as_of):
+    def _update(self, tokens, timestamp, as_of):
         """Update the bucket state for a new time, given a last known state.
 
         This function doesn't touch the database, and has no side effects.
 
         Args:
             tokens: The last known number of tokens.
-            last: The timestamp of the last known number of tokens.
+            timestamp: The timestamp of the last known number of tokens.
             as_of: The query time.
 
         Returns:
-            A (tokens, last) state tuple.
+            A (tokens, timestamp) state tuple.
         """
-        tdelta = as_of - last
+        tdelta = as_of - timestamp
         tokens += tdelta * self.rate / self.period
-        return tokens, last
+        return tokens, timestamp
 
     def _peek(self):
         """Get the current bucket state, and update the database.
@@ -164,7 +164,7 @@ class TokenBucket(object):
         Will perform a SAVEPOINT/RELEASE on the database.
 
         Returns:
-            A (tokens, last) tuple, clamped to valid values.
+            A (tokens, timestamp) tuple, clamped to valid values.
         """
         with self.db:
             row = self.db.cursor().execute(
@@ -172,12 +172,12 @@ class TokenBucket(object):
                 (self.key,)).fetchone()
             now = time.time()
             if not row:
-                tokens, last = self.rate, now
+                tokens, timestamp = self.rate, now
             else:
-                tokens, last = row
-            tokens, last = self._update(tokens, last, now)
-            tokens, last = self._set(tokens, now)
-            return (tokens, last)
+                tokens, timestamp = row
+            tokens, timestamp = self._update(tokens, timestamp, now)
+            tokens, timestamp = self._set(tokens, now)
+            return (tokens, timestamp)
 
     def try_consume(self, n, leave=None):
         """Try to consume some tokens.
@@ -194,35 +194,35 @@ class TokenBucket(object):
                 tokens left over, after n are consumed.
 
         Returns:
-            A (success, tokens, last) tuple.
+            A (success, tokens, timestamp) tuple.
         """
         if leave is None:
             leave = 0
         with self._begin():
-            tokens, last = self._peek()
+            tokens, timestamp = self._peek()
             if tokens >= n and tokens > leave:
-                tokens, last = self._set(tokens - n, last=last)
+                tokens, timestamp = self._set(tokens - n, timestamp=timestamp)
                 log().debug(
                     "%s: Gave %s token(s). %s remaining.",
                     self.key, n, tokens)
-                return (True, tokens, last)
-            return (False, tokens, last)
+                return (True, tokens, timestamp)
+            return (False, tokens, timestamp)
 
-    def _estimate(self, tokens, last, n, as_of):
+    def _estimate(self, tokens, timestamp, n, as_of):
         """Estimate the timestamp at which we would have a number of tokens.
 
         This function doesn't touch the database, and has no side effects.
 
         Args:
             tokens: The last known number of tokens.
-            last: The time of the last known number of tokens.
+            timestamp: The timestamp of the last known number of tokens.
             n: The number of tokens we need.
             as_of: The time as of which the query is made.
 
         Returns:
             The timestamp at which we would have n tokens available.
         """
-        return last + (n - tokens) * self.period / self.rate
+        return timestamp + (n - tokens) * self.period / self.rate
 
     def consume(self, n, leave=None):
         """Consume tokens, waiting for them if necessary.
@@ -237,15 +237,15 @@ class TokenBucket(object):
                 would be able to leave this many behind.
 
         Returns:
-            A (tokens, last) tuple.
+            A (tokens, timestamp) tuple.
         """
         assert n > 0
         while True:
-            success, tokens, last = self.try_consume(n, leave=leave)
+            success, tokens, timestamp = self.try_consume(n, leave=leave)
             if success:
-                return (tokens, last)
+                return (tokens, timestamp)
             now = time.time()
-            target = self._estimate(tokens, last, n, now)
+            target = self._estimate(tokens, timestamp, n, now)
             if target > now:
                 wait = target - now
                 log().debug("%s: Waiting %ss for tokens", self.key, wait)
@@ -257,26 +257,26 @@ class TokenBucket(object):
         This will perform a BEGIN IMMEDIATE transaction on the database.
 
         Returns:
-            A (tokens, last) tuple.
+            A (tokens, timestamp) tuple.
         """
         with self._begin():
             return self._peek()
 
-    def set(self, tokens, last=None):
+    def set(self, tokens, timestamp=None):
         """Explicitly set the number of tokens.
 
         This will perform a BEGIN IMMEDIATE transaction on the database.
 
         Args:
             tokens: The number of tokens.
-            last: The time at which the tokens are measured. If None, defaults
-                to now.
+            timestamp: The time at which the tokens are measured. If None,
+                defaults to now.
 
         Returns:
-            A (tokens, last) tuple.
+            A (tokens, timestamp) tuple.
         """
         with self._begin():
-            return self._set(tokens, last=last)
+            return self._set(tokens, timestamp=timestamp)
 
 
 class ScheduledTokenBucket(TokenBucket):
@@ -330,13 +330,13 @@ class ScheduledTokenBucket(TokenBucket):
         """
         return self.get_last_refill(when) + self.period
 
-    def _update(self, tokens, last, as_of):
+    def _update(self, tokens, timestamp, as_of):
         last_refill = self.get_last_refill(as_of)
-        if last_refill > last:
+        if last_refill > timestamp:
             return (self.rate, last_refill)
         return (tokens, as_of)
 
-    def _estimate(self, tokens, last, n, as_of):
+    def _estimate(self, tokens, timestamp, n, as_of):
         if tokens >= n:
             return as_of
         return self.get_next_refill(as_of)
@@ -638,8 +638,8 @@ class TimeSeriesTokenBucket(TokenBucket):
         This function doesn't touch the database, and has no side effects.
 
         Args:
-            tokens: The last known number of tokens.
-            last: The time of the last known number of tokens.
+            times: A list of token timestamps, between `as_of - period` and
+                `as_of`.
             as_of: The time as of which the query is made.
             n: The number of tokens we need.
 
